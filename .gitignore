@@ -1,4 +1,5 @@
+__pycache__/
+.vscode
 archive
 archive.zip
 dataset_old.csv
-stacked_model.pkl
