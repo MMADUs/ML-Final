@@ -1,34 +1,28 @@
-# module.py
-
 import pickle
 import pandas as pd
 
 MODEL_PATH = "stacked_model.pkl"
 LABEL_ENCODER_PATH = "label_encoder.pkl"
 
-# Load model
 with open(MODEL_PATH, "rb") as file:
     model = pickle.load(file)
 
 
 def feature_engineering(df):
-    # known ratios in agriculture
+    df = df.copy()
+
     df["n_p_ratio"] = df["nitrogen"] / (df["phosphorus"] + 1e-6)
     df["n_k_ratio"] = df["nitrogen"] / (df["potassium"] + 1e-6)
     df["p_k_ratio"] = df["phosphorus"] / (df["potassium"] + 1e-6)
 
-    # total nutrient load
     df["npk_total"] = df["nitrogen"] + df["phosphorus"] + df["potassium"]
 
-    # ratio to check whether humidity is caused by rainfall
     df["humidity_rain_ratio"] = df["humidity"] / (df["rainfall"] + 1e-6)
 
-    # ph categorization
     df["ph_type"] = pd.cut(
         df["ph"], bins=[0, 6.0, 7.5, 14], labels=["acidic", "neutral", "alkaline"]
     )
 
-    # temperature categorization
     df["temp_zone"] = pd.cut(
         df["temperature"], bins=[0, 15, 25, 50], labels=["cool", "moderate", "hot"]
     )
@@ -36,9 +30,8 @@ def feature_engineering(df):
     return df
 
 
-def predict_crop(n, p, k, temperature, humidity, ph, rainfall):
-    # Create dataframe from streamlit input
-    df = pd.DataFrame(
+def _build_df(n, p, k, temperature, humidity, ph, rainfall):
+    return pd.DataFrame(
         [
             {
                 "nitrogen": n,
@@ -52,17 +45,39 @@ def predict_crop(n, p, k, temperature, humidity, ph, rainfall):
         ]
     )
 
-    # Apply feature engineering
-    df = feature_engineering(df)
 
-    # Predict
+def predict_crop(n, p, k, temperature, humidity, ph, rainfall):
+    df = feature_engineering(_build_df(n, p, k, temperature, humidity, ph, rainfall))
     prediction = model.predict(df)
 
-    # Load label encoder
     with open(LABEL_ENCODER_PATH, "rb") as file:
         le = pickle.load(file)
 
-    # Decode prediction
-    decoded_prediction = le.inverse_transform(prediction)
+    return le.inverse_transform(prediction)[0]
 
-    return decoded_prediction[0]
+
+def predict_crop_proba(n, p, k, temperature, humidity, ph, rainfall):
+    """Returns (proba_dict, engineered_features_dict)."""
+    df_raw = _build_df(n, p, k, temperature, humidity, ph, rainfall)
+    df_eng = feature_engineering(df_raw)
+
+    with open(LABEL_ENCODER_PATH, "rb") as file:
+        le = pickle.load(file)
+
+    proba = model.predict_proba(df_eng)[0]
+    proba_dict = {
+        str(le.inverse_transform([i])[0]): float(p) for i, p in enumerate(proba)
+    }
+
+    row = df_eng.iloc[0]
+    engineered = {
+        "N/P Ratio": round(float(row["n_p_ratio"]), 4),
+        "N/K Ratio": round(float(row["n_k_ratio"]), 4),
+        "P/K Ratio": round(float(row["p_k_ratio"]), 4),
+        "NPK Total": round(float(row["npk_total"]), 2),
+        "Humidity/Rain Ratio": round(float(row["humidity_rain_ratio"]), 4),
+        "pH Type": str(row["ph_type"]),
+        "Temperature Zone": str(row["temp_zone"]),
+    }
+
+    return proba_dict, engineered
